@@ -9,7 +9,7 @@
     </style>
 </head>
 <body>
-<script src="https://cdn.jsdelivr.net/npm/phaser@4/dist/phaser.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/phaser@3/dist/phaser.min.js"></script>
 <script>
 'use strict';
 
@@ -33,50 +33,140 @@ class GameScene extends Phaser.Scene {
     constructor() { super('GameScene'); }
 
     preload() {
-        // Player: blue circle with white forward wedge
-        let g = this.make.graphics({ add: false });
-        g.fillStyle(0x1177ee, 1);
-        g.fillCircle(20, 20, 18);
-        g.fillStyle(0xffffff, 1);
-        g.fillTriangle(20, 7, 34, 20, 20, 33);
-        g.generateTexture('player', 40, 40);
+        let g;
+
+        // ── Player (48×48, ship pointing RIGHT) ──────────────────────────────
+        g = this.make.graphics({ add: false });
+        // Outer glow rings
+        g.fillStyle(0x1144ff, 0.10); g.fillCircle(24, 24, 24);
+        g.fillStyle(0x2255ff, 0.14); g.fillCircle(24, 24, 21);
+        g.fillStyle(0x3366ff, 0.18); g.fillCircle(24, 24, 18);
+        // Main hull (dark navy polygon)
+        g.fillStyle(0x0b1e52, 1);
+        g.fillPoints([
+            {x:44,y:24},{x:30,y:10},{x:8,y:14},{x:4,y:24},{x:8,y:34},{x:30,y:38}
+        ], true);
+        // Hull highlight (medium blue)
+        g.fillStyle(0x1a4aaa, 1);
+        g.fillPoints([
+            {x:40,y:24},{x:28,y:13},{x:11,y:17},{x:8,y:24},{x:11,y:31},{x:28,y:35}
+        ], true);
+        // Engine nozzles (back)
+        g.fillStyle(0x0d2a6e, 1);
+        g.fillRect(5, 14, 6, 5);
+        g.fillRect(5, 29, 6, 5);
+        // Engine glow (orange)
+        g.fillStyle(0xff6600, 0.9); g.fillCircle(7, 17, 4);
+        g.fillStyle(0xff6600, 0.9); g.fillCircle(7, 31, 4);
+        g.fillStyle(0xffaa00, 1);   g.fillCircle(6, 17, 2);
+        g.fillStyle(0xffaa00, 1);   g.fillCircle(6, 31, 2);
+        // Cockpit
+        g.fillStyle(0x55aaff, 1);   g.fillCircle(34, 24, 5);
+        g.fillStyle(0xaaddff, 1);   g.fillCircle(35, 23, 2);
+        // Hull edge
+        g.lineStyle(1.5, 0x4488ff, 0.9);
+        g.strokePoints([
+            {x:44,y:24},{x:30,y:10},{x:8,y:14},{x:4,y:24},{x:8,y:34},{x:30,y:38}
+        ], true);
+        g.generateTexture('player', 48, 48);
         g.destroy();
 
-        // Grunt: dark red square with brighter center
+        // ── Grunt (40×40, hexagonal robot facing RIGHT) ───────────────────────
         g = this.make.graphics({ add: false });
-        g.fillStyle(0xaa1111, 1);
-        g.fillRect(0, 0, 32, 32);
-        g.fillStyle(0xff4444, 1);
-        g.fillRect(6, 6, 20, 20);
-        g.generateTexture('grunt', 32, 32);
+        // Shadow
+        g.fillStyle(0x1a0000, 0.7); g.fillCircle(21, 21, 19);
+        // Outer hex body
+        g.fillStyle(0x7a0f0f, 1);
+        g.fillPoints([
+            {x:37,y:20},{x:29,y:6},{x:11,y:6},{x:3,y:20},{x:11,y:34},{x:29,y:34}
+        ], true);
+        // Inner hex highlight
+        g.fillStyle(0xbb2222, 1);
+        g.fillPoints([
+            {x:32,y:20},{x:25,y:10},{x:15,y:10},{x:8,y:20},{x:15,y:30},{x:25,y:30}
+        ], true);
+        // Chest plate
+        g.fillStyle(0xdd3333, 1);
+        g.fillRect(14, 15, 12, 10);
+        g.fillStyle(0xff5555, 1);
+        g.fillRect(16, 17, 8, 6);
+        // Glowing eyes (right side, since it faces right)
+        g.fillStyle(0xff0000, 1); g.fillCircle(30, 15, 4);
+        g.fillStyle(0xff0000, 1); g.fillCircle(30, 25, 4);
+        g.fillStyle(0xff8888, 1); g.fillCircle(31, 14, 2);
+        g.fillStyle(0xff8888, 1); g.fillCircle(31, 24, 2);
+        // Eye glow
+        g.fillStyle(0xff0000, 0.3); g.fillCircle(30, 15, 6);
+        g.fillStyle(0xff0000, 0.3); g.fillCircle(30, 25, 6);
+        // Edge
+        g.lineStyle(1.5, 0xff4444, 0.8);
+        g.strokePoints([
+            {x:37,y:20},{x:29,y:6},{x:11,y:6},{x:3,y:20},{x:11,y:34},{x:29,y:34}
+        ], true);
+        g.generateTexture('grunt', 40, 40);
         g.destroy();
 
-        // Runner: orange diamond (two triangles)
+        // ── Runner (40×40, sleek diamond facing RIGHT) ────────────────────────
         g = this.make.graphics({ add: false });
-        g.fillStyle(0xff7700, 1);
-        g.fillTriangle(16, 0, 32, 16, 16, 32);
-        g.fillTriangle(0, 16, 16, 0, 16, 32);
-        g.generateTexture('runner', 32, 32);
+        // Outer glow
+        g.fillStyle(0xff5500, 0.12); g.fillCircle(20, 20, 20);
+        g.fillStyle(0xff6600, 0.18); g.fillCircle(20, 20, 16);
+        // Outer diamond (deep orange)
+        g.fillStyle(0x992200, 1);
+        g.fillPoints([{x:38,y:20},{x:20,y:5},{x:2,y:20},{x:20,y:35}], true);
+        // Mid diamond (bright orange)
+        g.fillStyle(0xff6600, 1);
+        g.fillPoints([{x:33,y:20},{x:20,y:9},{x:7,y:20},{x:20,y:31}], true);
+        // Inner diamond (yellow-orange)
+        g.fillStyle(0xff9900, 1);
+        g.fillPoints([{x:27,y:20},{x:20,y:13},{x:13,y:20},{x:20,y:27}], true);
+        // Bright core
+        g.fillStyle(0xffcc00, 1); g.fillCircle(22, 20, 4);
+        g.fillStyle(0xffee88, 1); g.fillCircle(23, 19, 2);
+        // Speed stripes (back half)
+        g.lineStyle(1, 0xff8800, 0.6);
+        g.lineBetween(2, 20, 10, 15);
+        g.lineBetween(2, 20, 10, 25);
+        // Edge
+        g.lineStyle(1.5, 0xffaa00, 0.9);
+        g.strokePoints([{x:38,y:20},{x:20,y:5},{x:2,y:20},{x:20,y:35}], true);
+        g.generateTexture('runner', 40, 40);
         g.destroy();
 
-        // Bullet: small yellow circle
+        // ── Bullet (12×12, glowing plasma shot) ──────────────────────────────
         g = this.make.graphics({ add: false });
-        g.fillStyle(0xffee00, 1);
-        g.fillCircle(4, 4, 4);
-        g.generateTexture('bullet', 8, 8);
+        g.fillStyle(0xff8800, 0.20); g.fillCircle(6, 6, 6);
+        g.fillStyle(0xffcc00, 0.45); g.fillCircle(6, 6, 4);
+        g.fillStyle(0xffee00, 1);    g.fillCircle(6, 6, 2.5);
+        g.fillStyle(0xffffff, 1);    g.fillCircle(6, 6, 1);
+        g.generateTexture('bullet', 12, 12);
         g.destroy();
     }
 
     create() {
         // --- World background ---
         const bg = this.add.graphics();
-        bg.fillStyle(0x08081a, 1);
+        bg.fillStyle(0x06060f, 1);
         bg.fillRect(0, 0, WORLD_W, WORLD_H);
-        bg.lineStyle(1, 0x14143a, 1);
-        for (let x = 0; x <= WORLD_W; x += 80) bg.lineBetween(x, 0, x, WORLD_H);
-        for (let y = 0; y <= WORLD_H; y += 80) bg.lineBetween(0, y, WORLD_W, y);
-        bg.lineStyle(3, 0x2244cc, 1);
-        bg.strokeRect(3, 3, WORLD_W - 6, WORLD_H - 6);
+        // Major grid lines (every 160px)
+        bg.lineStyle(1, 0x1a1a40, 1);
+        for (let x = 0; x <= WORLD_W; x += 160) bg.lineBetween(x, 0, x, WORLD_H);
+        for (let y = 0; y <= WORLD_H; y += 160) bg.lineBetween(0, y, WORLD_W, y);
+        // Minor grid lines (every 80px)
+        bg.lineStyle(1, 0x0e0e28, 1);
+        for (let x = 80; x < WORLD_W; x += 160) bg.lineBetween(x, 0, x, WORLD_H);
+        for (let y = 80; y < WORLD_H; y += 160) bg.lineBetween(0, y, WORLD_W, y);
+        // Intersection dots on major grid
+        bg.fillStyle(0x222255, 1);
+        for (let x = 0; x <= WORLD_W; x += 160) {
+            for (let y = 0; y <= WORLD_H; y += 160) {
+                bg.fillRect(x - 1, y - 1, 2, 2);
+            }
+        }
+        // World border glow (layered)
+        bg.lineStyle(6, 0x112288, 0.3); bg.strokeRect(0, 0, WORLD_W, WORLD_H);
+        bg.lineStyle(3, 0x2244cc, 0.7); bg.strokeRect(2, 2, WORLD_W - 4, WORLD_H - 4);
+        bg.lineStyle(1, 0x4477ff, 1);   bg.strokeRect(4, 4, WORLD_W - 8, WORLD_H - 8);
 
         this.physics.world.setBounds(0, 0, WORLD_W, WORLD_H);
 
@@ -84,6 +174,7 @@ class GameScene extends Phaser.Scene {
         this.player = this.physics.add.sprite(WORLD_W / 2, WORLD_H / 2, 'player');
         this.player.setCollideWorldBounds(true);
         this.player.setDepth(10);
+        this.player.body.setCircle(16, 8, 8); // circular hitbox (radius, offsetX, offsetY)
         this.player.hp     = PLAYER_HP;
         this.player.alive  = true;
         this.player.lastFired = 0;
@@ -175,6 +266,7 @@ class GameScene extends Phaser.Scene {
         e.dmg    = type === 'grunt' ? GRUNT_DMG : RUNNER_DMG;
         e.hitCd  = 0;
         e.body.allowGravity = false;
+        e.body.setCircle(14, 6, 6); // circular hitbox
         e.hpBar  = this.add.graphics().setDepth(6);
         return e;
     }
@@ -328,10 +420,12 @@ class GameScene extends Phaser.Scene {
 
             if (e.hpBar) {
                 e.hpBar.clear();
-                const bw = 30, bh = 4, bx = e.x - 15, by = e.y - 24;
-                e.hpBar.fillStyle(0x222222, 1);
+                const bw = 36, bh = 5, bx = e.x - 18, by = e.y - 28;
+                e.hpBar.fillStyle(0x111122, 1);
+                e.hpBar.fillRect(bx - 1, by - 1, bw + 2, bh + 2);
+                e.hpBar.fillStyle(0x222233, 1);
                 e.hpBar.fillRect(bx, by, bw, bh);
-                e.hpBar.fillStyle(e.etype === 'grunt' ? 0xff4444 : 0xff8800, 1);
+                e.hpBar.fillStyle(e.etype === 'grunt' ? 0xff3333 : 0xff8800, 1);
                 e.hpBar.fillRect(bx, by, bw * (e.hp / e.maxHp), bh);
             }
         });
