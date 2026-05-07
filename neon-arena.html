@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Neon Arena</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: #000; display: flex; justify-content: center; align-items: center; height: 100vh; overflow: hidden; }
+    </style>
+</head>
+<body>
+<script src="https://cdn.jsdelivr.net/npm/phaser@4/dist/phaser.min.js"></script>
+<script>
+'use strict';
+
+const WORLD_W    = 2400;
+const WORLD_H    = 2400;
+const PLAYER_SPD = 220;
+const BULLET_SPD = 560;
+const BULLET_DMG = 20;
+const PLAYER_HP  = 100;
+const FIRE_RATE  = 180;   // ms between shots
+const GRUNT_HP   = 30;
+const GRUNT_SPD  = 75;
+const GRUNT_DMG  = 8;
+const RUNNER_HP  = 15;
+const RUNNER_SPD = 165;
+const RUNNER_DMG = 5;
+const RESPAWN_MS = 3000;
+const WAVE_GAP   = 4000;
+
+class GameScene extends Phaser.Scene {
+    constructor() { super('GameScene'); }
+
+    preload() {
+        // Player: blue circle with white forward wedge
+        let g = this.make.graphics({ add: false });
+        g.fillStyle(0x1177ee, 1);
+        g.fillCircle(20, 20, 18);
+        g.fillStyle(0xffffff, 1);
+        g.fillTriangle(20, 7, 34, 20, 20, 33);
+        g.generateTexture('player', 40, 40);
+        g.destroy();
+
+        // Grunt: dark red square with brighter center
+        g = this.make.graphics({ add: false });
+        g.fillStyle(0xaa1111, 1);
+        g.fillRect(0, 0, 32, 32);
+        g.fillStyle(0xff4444, 1);
+        g.fillRect(6, 6, 20, 20);
+        g.generateTexture('grunt', 32, 32);
+        g.destroy();
+
+        // Runner: orange diamond (two triangles)
+        g = this.make.graphics({ add: false });
+        g.fillStyle(0xff7700, 1);
+        g.fillTriangle(16, 0, 32, 16, 16, 32);
+        g.fillTriangle(0, 16, 16, 0, 16, 32);
+        g.generateTexture('runner', 32, 32);
+        g.destroy();
+
+        // Bullet: small yellow circle
+        g = this.make.graphics({ add: false });
+        g.fillStyle(0xffee00, 1);
+        g.fillCircle(4, 4, 4);
+        g.generateTexture('bullet', 8, 8);
+        g.destroy();
+    }
+
+    create() {
+        // --- World background ---
+        const bg = this.add.graphics();
+        bg.fillStyle(0x08081a, 1);
+        bg.fillRect(0, 0, WORLD_W, WORLD_H);
+        bg.lineStyle(1, 0x14143a, 1);
+        for (let x = 0; x <= WORLD_W; x += 80) bg.lineBetween(x, 0, x, WORLD_H);
+        for (let y = 0; y <= WORLD_H; y += 80) bg.lineBetween(0, y, WORLD_W, y);
+        bg.lineStyle(3, 0x2244cc, 1);
+        bg.strokeRect(3, 3, WORLD_W - 6, WORLD_H - 6);
+
+        this.physics.world.setBounds(0, 0, WORLD_W, WORLD_H);
+
+        // --- Player ---
+        this.player = this.physics.add.sprite(WORLD_W / 2, WORLD_H / 2, 'player');
+        this.player.setCollideWorldBounds(true);
+        this.player.setDepth(10);
+        this.player.hp     = PLAYER_HP;
+        this.player.alive  = true;
+        this.player.lastFired = 0;
+
+        // --- Camera ---
+        this.cameras.main
+            .setBounds(0, 0, WORLD_W, WORLD_H)
+            .startFollow(this.player, true, 0.12, 0.12);
+
+        // --- Groups ---
+        this.bullets = this.physics.add.group();
+        this.enemies = this.physics.add.group();
+
+        // --- Overlaps ---
+        this.physics.add.overlap(this.bullets, this.enemies, this.onBulletHit, null, this);
+        this.physics.add.overlap(this.player,  this.enemies, this.onPlayerHit, null, this);
+
+        // --- Game state ---
+        this.wave      = 0;
+        this.kills     = 0;
+        this.waveActive = false;
+        this.mouseDown  = false;
+
+        // --- Input ---
+        this.keys = this.input.keyboard.addKeys('W,A,S,D,UP,LEFT,DOWN,RIGHT');
+        this.input.mouse.disableContextMenu();
+        this.input.on('pointerdown', (p) => { if (p.leftButtonDown()) this.mouseDown = true; });
+        this.input.on('pointerup',   ()  => { this.mouseDown = false; });
+
+        // --- HUD (setScrollFactor(0) pins to screen) ---
+        const ts = (col) => ({
+            fontFamily: 'monospace', fontSize: '18px', color: col,
+            stroke: '#000000', strokeThickness: 3
+        });
+        this.hudWave  = this.add.text(12,  12, 'Wave 1',   ts('#ffffff')).setScrollFactor(0).setDepth(50);
+        this.hudKills = this.add.text(12,  40, 'Kills: 0', ts('#aaaaee')).setScrollFactor(0).setDepth(50);
+        this.hudHP    = this.add.text(12,  68, 'HP: 100',  ts('#44ff88')).setScrollFactor(0).setDepth(50);
+        this.hudMsg   = this.add.text(400, 300, '', {
+            fontFamily: 'monospace', fontSize: '34px', color: '#ffff00',
+            stroke: '#000000', strokeThickness: 5
+        }).setScrollFactor(0).setDepth(50).setOrigin(0.5);
+
+        // HP bar (drawn each frame in updateHPBar)
+        this.hpBarBg = this.add.graphics().setScrollFactor(0).setDepth(49);
+        this.hpBarFg = this.add.graphics().setScrollFactor(0).setDepth(50);
+        this.updateHPBar();
+
+        // --- Controls hint ---
+        this.add.text(12, this.scale.height - 24, 'WASD: Move   Mouse: Aim   Click: Shoot', {
+            fontFamily: 'monospace', fontSize: '12px', color: '#555577'
+        }).setScrollFactor(0).setDepth(50);
+
+        // Start first wave
+        this.time.delayedCall(600, () => this.startWave(), [], this);
+    }
+
+    // ── Wave management ──────────────────────────────────────────────────────
+
+    startWave() {
+        this.wave++;
+        this.waveActive = true;
+
+        const total   = 5 + this.wave * 3;
+        const runners = this.wave >= 3 ? Math.floor(total * 0.3) : 0;
+        for (let i = 0; i < runners;           i++) this.spawnEnemy('runner');
+        for (let i = 0; i < total - runners;   i++) this.spawnEnemy('grunt');
+
+        this.hudWave.setText(`Wave ${this.wave}`);
+        this.flashMsg(`Wave ${this.wave}!`, '#ffff44', 1500);
+    }
+
+    spawnEnemy(type) {
+        const margin = 50;
+        const side   = Phaser.Math.Between(0, 3);
+        let x, y;
+        switch (side) {
+            case 0: x = Phaser.Math.Between(margin, WORLD_W - margin); y = margin;             break;
+            case 1: x = Phaser.Math.Between(margin, WORLD_W - margin); y = WORLD_H - margin;   break;
+            case 2: x = margin;            y = Phaser.Math.Between(margin, WORLD_H - margin);  break;
+            default: x = WORLD_W - margin; y = Phaser.Math.Between(margin, WORLD_H - margin);
+        }
+
+        const e = this.enemies.create(x, y, type);
+        e.setDepth(5);
+        e.etype  = type;
+        e.hp     = type === 'grunt' ? GRUNT_HP  : RUNNER_HP;
+        e.maxHp  = e.hp;
+        e.spd    = type === 'grunt' ? GRUNT_SPD : RUNNER_SPD;
+        e.dmg    = type === 'grunt' ? GRUNT_DMG : RUNNER_DMG;
+        e.hitCd  = 0;
+        e.body.allowGravity = false;
+        e.hpBar  = this.add.graphics().setDepth(6);
+        return e;
+    }
+
+    // ── Shooting ─────────────────────────────────────────────────────────────
+
+    shoot() {
+        const now = this.time.now;
+        if (now - this.player.lastFired < FIRE_RATE) return;
+        this.player.lastFired = now;
+
+        const ptr = this.input.activePointer;
+        const ang = Phaser.Math.Angle.Between(
+            this.player.x, this.player.y,
+            ptr.worldX, ptr.worldY
+        );
+
+        const b = this.bullets.create(this.player.x, this.player.y, 'bullet');
+        b.setDepth(8);
+        b.body.allowGravity = false;
+        b.setVelocity(Math.cos(ang) * BULLET_SPD, Math.sin(ang) * BULLET_SPD);
+        b.ttl = 1600;
+    }
+
+    // ── Collision callbacks ───────────────────────────────────────────────────
+
+    onBulletHit(bullet, enemy) {
+        bullet.disableBody(true, true);
+
+        enemy.hp -= BULLET_DMG;
+        this.tweens.add({ targets: enemy, alpha: 0.15, duration: 60, yoyo: true });
+
+        if (enemy.hp <= 0) this.killEnemy(enemy);
+    }
+
+    killEnemy(enemy) {
+        this.kills++;
+        this.hudKills.setText(`Kills: ${this.kills}`);
+
+        // Explosion flash
+        const col   = enemy.etype === 'grunt' ? 0xff4422 : 0xff8800;
+        const flash = this.add.graphics().setDepth(15);
+        flash.fillStyle(col, 0.9);
+        flash.fillCircle(enemy.x, enemy.y, 22);
+        this.tweens.add({
+            targets: flash, alpha: 0, scaleX: 3, scaleY: 3, duration: 350,
+            onComplete: () => flash.destroy()
+        });
+
+        if (enemy.hpBar) enemy.hpBar.destroy();
+        enemy.destroy();
+
+        // Check wave clear
+        if (this.enemies.countActive(true) === 0 && this.waveActive) {
+            this.waveActive = false;
+            this.flashMsg('Wave Clear!', '#44ff88', WAVE_GAP - 500);
+            this.time.delayedCall(WAVE_GAP, () => this.startWave(), [], this);
+        }
+    }
+
+    onPlayerHit(player, enemy) {
+        if (!player.alive) return;
+        const now = this.time.now;
+        if (now < enemy.hitCd) return;
+        enemy.hitCd = now + 600;
+
+        player.hp -= enemy.dmg;
+        this.updateHPBar();
+        const pct = player.hp / PLAYER_HP;
+        const col = pct > 0.5 ? '#44ff88' : pct > 0.25 ? '#ffaa00' : '#ff4444';
+        this.hudHP.setText(`HP: ${Math.max(0, player.hp)}`).setStyle({ color: col });
+        this.cameras.main.shake(100, 0.008);
+
+        if (player.hp <= 0) this.playerDie();
+    }
+
+    playerDie() {
+        this.player.alive = false;
+        this.player.setActive(false).setVisible(false).setVelocity(0, 0);
+        this.flashMsg('DEAD — Respawning...', '#ff4444', RESPAWN_MS);
+        this.time.delayedCall(RESPAWN_MS, () => this.respawn(), [], this);
+    }
+
+    respawn() {
+        this.player.hp = PLAYER_HP;
+        this.player.alive = true;
+        this.player.setActive(true).setVisible(true);
+        this.player.setPosition(WORLD_W / 2, WORLD_H / 2);
+        this.updateHPBar();
+        this.hudHP.setText(`HP: ${PLAYER_HP}`).setStyle({ color: '#44ff88' });
+    }
+
+    // ── HUD helpers ──────────────────────────────────────────────────────────
+
+    updateHPBar() {
+        const w = 200, h = 14, x = 12, y = 96;
+        this.hpBarBg.clear();
+        this.hpBarBg.fillStyle(0x333344, 1);
+        this.hpBarBg.fillRect(x, y, w, h);
+
+        const pct = Math.max(0, this.player.hp / PLAYER_HP);
+        const col = pct > 0.5 ? 0x44ff88 : pct > 0.25 ? 0xffaa00 : 0xff4444;
+        this.hpBarFg.clear();
+        this.hpBarFg.fillStyle(col, 1);
+        this.hpBarFg.fillRect(x, y, w * pct, h);
+    }
+
+    flashMsg(text, color, duration) {
+        this.hudMsg.setText(text).setStyle({ color });
+        if (this._msgTimer) this._msgTimer.remove();
+        this._msgTimer = this.time.delayedCall(duration, () => this.hudMsg.setText(''), [], this);
+    }
+
+    // ── Main update loop ─────────────────────────────────────────────────────
+
+    update(time, delta) {
+        // Player movement + aim
+        if (this.player.alive) {
+            let vx = 0, vy = 0;
+            if (this.keys.A.isDown || this.keys.LEFT.isDown)  vx -= PLAYER_SPD;
+            if (this.keys.D.isDown || this.keys.RIGHT.isDown) vx += PLAYER_SPD;
+            if (this.keys.W.isDown || this.keys.UP.isDown)    vy -= PLAYER_SPD;
+            if (this.keys.S.isDown || this.keys.DOWN.isDown)  vy += PLAYER_SPD;
+            if (vx !== 0 && vy !== 0) { vx *= 0.7071; vy *= 0.7071; }
+            this.player.setVelocity(vx, vy);
+
+            const ptr = this.input.activePointer;
+            this.player.setRotation(
+                Phaser.Math.Angle.Between(this.player.x, this.player.y, ptr.worldX, ptr.worldY)
+            );
+
+            if (this.mouseDown) this.shoot();
+        }
+
+        // Bullet lifetime — collect spent bullets then destroy
+        const spent = [];
+        this.bullets.getChildren().forEach(b => {
+            if (!b.active) { spent.push(b); return; }
+            b.ttl -= delta;
+            if (b.ttl <= 0) b.disableBody(true, true);
+        });
+        spent.forEach(b => b.destroy());
+
+        // Enemy AI + HP bars
+        const tx = this.player.x, ty = this.player.y;
+        this.enemies.getChildren().forEach(e => {
+            if (!e.active) return;
+            const ang = Phaser.Math.Angle.Between(e.x, e.y, tx, ty);
+            e.setVelocity(Math.cos(ang) * e.spd, Math.sin(ang) * e.spd);
+            e.setRotation(ang);
+
+            if (e.hpBar) {
+                e.hpBar.clear();
+                const bw = 30, bh = 4, bx = e.x - 15, by = e.y - 24;
+                e.hpBar.fillStyle(0x222222, 1);
+                e.hpBar.fillRect(bx, by, bw, bh);
+                e.hpBar.fillStyle(e.etype === 'grunt' ? 0xff4444 : 0xff8800, 1);
+                e.hpBar.fillRect(bx, by, bw * (e.hp / e.maxHp), bh);
+            }
+        });
+    }
+}
+
+new Phaser.Game({
+    type: Phaser.AUTO,
+    width: 800,
+    height: 600,
+    backgroundColor: '#08081a',
+    physics: {
+        default: 'arcade',
+        arcade: { gravity: { x: 0, y: 0 }, debug: false }
+    },
+    scale: {
+        mode: Phaser.Scale.FIT,
+        autoCenter: Phaser.Scale.CENTER_BOTH
+    },
+    scene: GameScene
+});
+</script>
+</body>
+</html>
