@@ -1,0 +1,670 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Retro Arena</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:#0d1117; overflow:hidden; font-family:'Courier New',monospace; }
+canvas { display:block; }
+
+/* ── HUD ── */
+#hud {
+  display:none; position:absolute; top:0; left:0;
+  width:100%; height:100%; pointer-events:none; color:#eee;
+}
+#wave-info {
+  position:absolute; top:14px; left:50%; transform:translateX(-50%);
+  text-align:center; letter-spacing:2px;
+}
+#wave-num  { font-size:20px; font-weight:bold; color:#ffe66d; }
+#enemy-cnt { font-size:12px; color:#a8dadc; margin-top:2px; }
+#next-wave { font-size:14px; color:#e94560; margin-top:4px; display:none; }
+
+#scoreboard {
+  position:absolute; top:10px; right:10px;
+  background:rgba(0,0,0,.65); border:1px solid #1a2030;
+  border-radius:6px; padding:8px 12px; min-width:140px; font-size:12px;
+}
+#sb-title { color:#ffe66d; letter-spacing:2px; font-size:10px; margin-bottom:6px; text-transform:uppercase; }
+.sb-row   { display:flex; justify-content:space-between; gap:10px; padding:2px 0; }
+.sb-name  { max-width:90px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.sb-kills { color:#e94560; font-weight:bold; }
+
+#hp-wrap {
+  position:absolute; bottom:20px; left:20px;
+}
+#hp-label { font-size:10px; color:#666; letter-spacing:2px; text-transform:uppercase; margin-bottom:4px; }
+#hp-bg    { width:180px; height:14px; background:#1a2030; border:1px solid #2a3050; border-radius:3px; overflow:hidden; }
+#hp-fill  { height:100%; background:linear-gradient(90deg,#e94560,#ff6b6b); border-radius:3px; transition:width .1s; }
+#hp-text  { font-size:10px; color:#aaa; margin-top:3px; }
+
+#death-screen {
+  display:none; position:absolute;
+  top:50%; left:50%; transform:translate(-50%,-50%);
+  text-align:center; color:#e94560; font-size:30px;
+  font-weight:bold; letter-spacing:4px;
+  text-shadow:0 0 24px #e94560;
+}
+#death-screen .sub { font-size:13px; color:#666; margin-top:10px; letter-spacing:2px; }
+
+/* ── Lobby ── */
+#lobby {
+  position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+  text-align:center; background:rgba(0,0,0,.88);
+  border:2px solid #e94560; border-radius:12px; padding:40px 52px;
+  pointer-events:all;
+}
+#lobby h1  { font-size:2.2rem; color:#e94560; letter-spacing:5px; margin-bottom:6px; }
+#lobby .tagline { color:#555; font-size:11px; letter-spacing:3px; margin-bottom:26px; }
+#nameInput {
+  background:#16213e; border:2px solid #0f3460; color:#eee;
+  font-family:'Courier New',monospace; font-size:16px;
+  padding:10px 16px; border-radius:6px; outline:none;
+  width:220px; text-align:center; display:block; margin:0 auto 14px;
+}
+#nameInput:focus { border-color:#e94560; }
+#joinBtn {
+  background:#e94560; color:#fff; border:none;
+  font-family:'Courier New',monospace; font-size:14px;
+  font-weight:bold; letter-spacing:2px; padding:12px 34px;
+  border-radius:6px; cursor:pointer; transition:opacity .15s;
+}
+#joinBtn:hover { opacity:.8; }
+#controls { margin-top:20px; font-size:11px; color:#444; line-height:2; }
+#controls span { color:#777; }
+</style>
+</head>
+<body>
+<canvas id="canvas"></canvas>
+
+<div id="hud">
+  <div id="wave-info">
+    <div id="wave-num">WAVE 1</div>
+    <div id="enemy-cnt"></div>
+    <div id="next-wave"></div>
+  </div>
+  <div id="scoreboard">
+    <div id="sb-title">Kills</div>
+    <div id="sb-rows"></div>
+  </div>
+  <div id="hp-wrap">
+    <div id="hp-label">Health</div>
+    <div id="hp-bg"><div id="hp-fill" style="width:100%"></div></div>
+    <div id="hp-text">100 / 100</div>
+  </div>
+  <div id="death-screen">
+    YOU DIED
+    <div class="sub">Respawning…</div>
+  </div>
+</div>
+
+<div id="lobby">
+  <h1>RETRO ARENA</h1>
+  <div class="tagline">SWORD SLASHER · IO</div>
+  <input id="nameInput" type="text" placeholder="Enter your name" maxlength="16" autocomplete="off"/>
+  <button id="joinBtn">ENTER ARENA</button>
+  <div id="controls">
+    <span>ARROWS / WASD</span> — Move<br>
+    <span>MOUSE</span> — Aim<br>
+    <span>LEFT CLICK</span> — Slash
+  </div>
+</div>
+
+<script>
+'use strict';
+
+// ── Canvas setup ──────────────────────────────────────────────────────────────
+const canvas = document.getElementById('canvas');
+const ctx    = canvas.getContext('2d');
+
+function resize() { canvas.width = innerWidth; canvas.height = innerHeight; }
+resize();
+window.addEventListener('resize', resize);
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+const TICK_MS     = 50;
+const SLASH_R     = 120;
+const SLASH_HALF  = 35 * Math.PI / 180;
+
+let WORLD_W = 2400;
+let WORLD_H = 2400;
+
+// ── Client state ──────────────────────────────────────────────────────────────
+const C = {
+  ws: null, myId: null, joined: false,
+  prev: null, curr: null, lastSnap: 0,
+  keys: { up:false, down:false, left:false, right:false },
+  mouseAngle: 0, mouseX: 0, mouseY: 0,
+  cam: { x:0, y:0 },
+  vfx: [],          // slash VFX list
+  shakeAmt: 0, shakeTimer: 0,
+  lastAngleSend: 0,
+};
+
+// ── Utilities ─────────────────────────────────────────────────────────────────
+const lerp  = (a,b,t) => a + (b-a)*t;
+function lerpAngle(a,b,t) {
+  const d = ((b-a)%(2*Math.PI)+3*Math.PI)%(2*Math.PI)-Math.PI;
+  return a + d*t;
+}
+function darken(hex, f) {
+  const r=parseInt(hex.slice(1,3),16), g=parseInt(hex.slice(3,5),16), b=parseInt(hex.slice(5,7),16);
+  return `rgb(${~~(r*(1-f))},${~~(g*(1-f))},${~~(b*(1-f))})`;
+}
+function clamp(v,lo,hi){ return Math.max(lo,Math.min(hi,v)); }
+
+// ── Input ─────────────────────────────────────────────────────────────────────
+const KEYMAP = {
+  ArrowUp:'up', ArrowDown:'down', ArrowLeft:'left', ArrowRight:'right',
+  w:'up', s:'down', a:'left', d:'right',
+  W:'up', S:'down', A:'left', D:'right',
+};
+
+document.addEventListener('keydown', e => {
+  if(!C.joined) return;
+  const dir = KEYMAP[e.key];
+  if(dir && !C.keys[dir]){ C.keys[dir]=true; sendKeys(); }
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.key)) e.preventDefault();
+});
+document.addEventListener('keyup', e => {
+  if(!C.joined) return;
+  const dir = KEYMAP[e.key];
+  if(dir && C.keys[dir]){ C.keys[dir]=false; sendKeys(); }
+});
+
+canvas.addEventListener('mousemove', e => {
+  if(!C.joined) return;
+  C.mouseX = e.clientX; C.mouseY = e.clientY;
+  recomputeAngle();
+  const now = Date.now();
+  if(now - C.lastAngleSend > 50){
+    C.lastAngleSend = now;
+    send({ type:'ANGLE', angle:C.mouseAngle });
+  }
+});
+
+canvas.addEventListener('click', () => {
+  if(!C.joined) return;
+  send({ type:'SLASH', angle:C.mouseAngle });
+  const me = myPlayer(C.curr);
+  if(me) addVfx(C.mouseAngle, me.x, me.y, me.color);
+});
+
+function sendKeys(){ send({ type:'KEYS', ...C.keys }); }
+
+function send(msg){
+  if(C.ws && C.ws.readyState === WebSocket.OPEN)
+    C.ws.send(JSON.stringify(msg));
+}
+
+function recomputeAngle(){
+  const me = myPlayer(C.curr);
+  if(!me) return;
+  C.mouseAngle = Math.atan2(C.mouseY - (me.y - C.cam.y), C.mouseX - (me.x - C.cam.x));
+}
+
+function myPlayer(snap){ return snap ? snap.players.find(p=>p.id===C.myId)||null : null; }
+
+// ── Lobby / join ──────────────────────────────────────────────────────────────
+document.getElementById('joinBtn').addEventListener('click', joinGame);
+document.getElementById('nameInput').addEventListener('keydown', e=>{ if(e.key==='Enter') joinGame(); });
+
+function joinGame(){
+  const name = document.getElementById('nameInput').value.trim() || 'Player';
+  const ws   = new WebSocket(`ws://${location.host}`);
+  C.ws = ws;
+
+  ws.onopen = () => send({ type:'JOIN', name });
+
+  ws.onmessage = ({ data }) => {
+    let msg; try{ msg=JSON.parse(data); }catch{ return; }
+    switch(msg.type){
+      case 'WELCOME':
+        C.myId   = msg.id;
+        WORLD_W  = msg.worldW;
+        WORLD_H  = msg.worldH;
+        C.joined = true;
+        document.getElementById('lobby').style.display = 'none';
+        document.getElementById('hud').style.display   = 'block';
+        requestAnimationFrame(loop);
+        break;
+      case 'SNAPSHOT':
+        C.prev     = C.curr;
+        C.curr     = msg;
+        C.lastSnap = performance.now();
+        updateHUD(msg);
+        break;
+      case 'SLASH_VFX': {
+        if(msg.playerId === C.myId) break; // own slash already shown locally
+        const src = C.curr && C.curr.players.find(p=>p.id===msg.playerId);
+        addVfx(msg.angle, msg.x, msg.y, src ? src.color : '#fff');
+        break;
+      }
+      case 'HIT':
+        if(msg.killerId === C.myId) shake(3, 150);
+        break;
+      case 'PLAYER_DIED':
+        if(msg.playerId === C.myId)
+          document.getElementById('death-screen').style.display = 'block';
+        break;
+      case 'PLAYER_RESPAWNED':
+        if(msg.playerId === C.myId)
+          document.getElementById('death-screen').style.display = 'none';
+        break;
+    }
+  };
+  ws.onclose = () => { C.joined=false; };
+}
+
+// ── HUD ───────────────────────────────────────────────────────────────────────
+function updateHUD(snap){
+  const me = myPlayer(snap);
+
+  // HP
+  if(me){
+    const pct = Math.max(0, me.hp/me.maxHp*100);
+    document.getElementById('hp-fill').style.width = pct+'%';
+    document.getElementById('hp-text').textContent = `${Math.ceil(me.hp)} / ${me.maxHp}`;
+    if(!me.dead) document.getElementById('death-screen').style.display='none';
+  }
+
+  // Wave
+  document.getElementById('wave-num').textContent = `WAVE ${snap.wave||0}`;
+  if(snap.waveActive){
+    document.getElementById('enemy-cnt').textContent = `${snap.enemies.length} ENEMIES`;
+    document.getElementById('next-wave').style.display = 'none';
+  } else {
+    document.getElementById('enemy-cnt').textContent = '';
+    const nw = document.getElementById('next-wave');
+    nw.style.display = 'block';
+    const sec = Math.ceil(snap.waveTimer/1000);
+    nw.textContent = sec>0 ? `WAVE ${snap.wave+1} IN ${sec}s` : 'GET READY!';
+  }
+
+  // Scoreboard
+  const rows = [...snap.players].sort((a,b)=>b.kills-a.kills);
+  document.getElementById('sb-rows').innerHTML = rows.map(p=>`
+    <div class="sb-row">
+      <span class="sb-name" style="color:${p.color}">${escHtml(p.name)}${p.id===C.myId?' ★':''}</span>
+      <span class="sb-kills">${p.kills}</span>
+    </div>`).join('');
+}
+
+function escHtml(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// ── VFX ───────────────────────────────────────────────────────────────────────
+function addVfx(angle, x, y, color){
+  C.vfx.push({ angle, x, y, color, t0: performance.now(), dur: 320 });
+}
+function shake(amt, dur){ C.shakeAmt=amt; C.shakeTimer=dur; }
+
+// ── Interpolation ─────────────────────────────────────────────────────────────
+function interpSnap(prev, curr, a){
+  if(!prev || !curr) return curr || { players:[], enemies:[] };
+  const players = curr.players.map(cp=>{
+    const pp = prev.players.find(p=>p.id===cp.id);
+    if(!pp) return cp;
+    return { ...cp, x:lerp(pp.x,cp.x,a), y:lerp(pp.y,cp.y,a), angle:lerpAngle(pp.angle,cp.angle,a) };
+  });
+  const enemies = curr.enemies.map(ce=>{
+    const pe = prev.enemies.find(e=>e.id===ce.id);
+    if(!pe) return ce;
+    return { ...ce, x:lerp(pe.x,ce.x,a), y:lerp(pe.y,ce.y,a), angle:lerpAngle(pe.angle,ce.angle,a) };
+  });
+  return { ...curr, players, enemies };
+}
+
+// ── Main loop ─────────────────────────────────────────────────────────────────
+function loop(){
+  if(!C.joined) return;
+  requestAnimationFrame(loop);
+
+  const alpha = clamp((performance.now()-C.lastSnap)/TICK_MS, 0, 1);
+  const snap  = interpSnap(C.prev, C.curr, alpha);
+
+  // Camera
+  const me = snap.players.find(p=>p.id===C.myId);
+  if(me){
+    C.cam.x = clamp(me.x - canvas.width/2,  0, WORLD_W - canvas.width);
+    C.cam.y = clamp(me.y - canvas.height/2, 0, WORLD_H - canvas.height);
+  }
+  recomputeAngle();
+
+  // Screen shake
+  let sx=0, sy=0;
+  if(C.shakeTimer>0){
+    C.shakeTimer -= 16;
+    const f = C.shakeTimer/150;
+    sx = (Math.random()-.5)*C.shakeAmt*f*4;
+    sy = (Math.random()-.5)*C.shakeAmt*f*4;
+  }
+
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  ctx.save();
+  ctx.translate(-C.cam.x+sx, -C.cam.y+sy);
+
+  drawWorld();
+  drawEnemyBars(snap.enemies);
+  drawEnemies(snap.enemies);
+  drawPlayers(snap.players);
+  drawVfx();
+
+  ctx.restore();
+
+  // Prune old VFX
+  const now = performance.now();
+  C.vfx = C.vfx.filter(v => now-v.t0 < v.dur);
+}
+
+// ── World ─────────────────────────────────────────────────────────────────────
+function drawWorld(){
+  ctx.fillStyle = '#0d1117';
+  ctx.fillRect(0,0,WORLD_W,WORLD_H);
+
+  ctx.strokeStyle = '#141c2a';
+  ctx.lineWidth   = 1;
+  const G = 64;
+  for(let x=0; x<=WORLD_W; x+=G){
+    ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,WORLD_H); ctx.stroke();
+  }
+  for(let y=0; y<=WORLD_H; y+=G){
+    ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(WORLD_W,y); ctx.stroke();
+  }
+
+  // Glow border
+  ctx.strokeStyle = 'rgba(233,69,96,.18)';
+  ctx.lineWidth   = 20;
+  ctx.strokeRect(0,0,WORLD_W,WORLD_H);
+  ctx.strokeStyle = '#e94560';
+  ctx.lineWidth   = 3;
+  ctx.strokeRect(4,4,WORLD_W-8,WORLD_H-8);
+}
+
+// ── Players ───────────────────────────────────────────────────────────────────
+function drawPlayers(players){
+  for(const p of players) drawPlayer(p, p.id===C.myId);
+}
+
+function drawPlayer(p, isMe){
+  ctx.save();
+  ctx.translate(p.x, p.y);
+
+  if(p.dead){
+    ctx.globalAlpha = 0.28;
+    ctx.rotate(performance.now()*0.0015);
+  } else {
+    ctx.rotate(p.angle);
+  }
+
+  // Shadow ellipse
+  ctx.save();
+  if(p.dead) ctx.rotate(-performance.now()*0.0015); else ctx.rotate(-p.angle);
+  ctx.fillStyle = 'rgba(0,0,0,.35)';
+  ctx.beginPath();
+  ctx.ellipse(0, 18, 12, 5, 0, 0, Math.PI*2);
+  ctx.fill();
+  ctx.restore();
+  if(!p.dead) ctx.rotate(0); // already rotated by angle above
+
+  const c = p.color;
+
+  // Legs
+  ctx.fillStyle = darken(c,.45);
+  ctx.fillRect(-7, 8, 5, 7);
+  ctx.fillRect(2,  9, 5, 6);
+
+  // Body / torso
+  ctx.fillStyle = c;
+  ctx.fillRect(-9, -6, 18, 15);
+  // Chest plate shading
+  ctx.fillStyle = 'rgba(0,0,0,.22)';
+  ctx.fillRect(-7, -4, 6, 11);
+
+  // Sword arm + sword (pointing right = aim direction)
+  if(!p.dead){
+    // Arm
+    ctx.fillStyle = '#f0b090';
+    ctx.fillRect(8, -4, 5, 5);
+    // Handle
+    ctx.fillStyle = '#6b3a0a';
+    ctx.fillRect(12, -3, 7, 4);
+    // Grip wrap
+    ctx.fillStyle = '#8B6914';
+    ctx.fillRect(13,-3,2,4); ctx.fillRect(16,-3,2,4);
+    // Guard (cross)
+    ctx.fillStyle = '#a07820';
+    ctx.fillRect(18,-8, 5,14);
+    // Guard gem
+    ctx.fillStyle = '#ffe66d';
+    ctx.fillRect(19,-6,3,3); ctx.fillRect(19,2,3,3);
+    // Blade
+    ctx.fillStyle = '#d0d8e0';
+    ctx.fillRect(22,-3,30,4);
+    // Blade highlight
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(22,-3,30,1);
+    // Blade edge
+    ctx.fillStyle = '#8090a0';
+    ctx.fillRect(50,-2,6,2);
+  }
+
+  // Head
+  ctx.fillStyle = '#f0b090';
+  ctx.fillRect(-6,-20,12,13);
+  // Hair
+  ctx.fillStyle = darken(c,.25);
+  ctx.fillRect(-6,-20,12,4);
+  ctx.fillRect(-7,-18,3,5); // side hair
+
+  // Eyes
+  ctx.fillStyle = '#111';
+  ctx.fillRect(1,-15,3,3);   // right (facing direction)
+  ctx.fillRect(-4,-14,2,2);  // left (slightly smaller)
+
+  // Name tag (always upright)
+  if(!p.dead) ctx.rotate(-p.angle);
+  else ctx.rotate(-performance.now()*0.0015);
+
+  ctx.fillStyle = isMe ? '#ffe66d' : '#ddd';
+  ctx.font = `bold 11px "Courier New"`;
+  ctx.textAlign = 'center';
+  ctx.fillText(p.name, 0, -34);
+
+  // Ring for local player
+  if(isMe && !p.dead){
+    ctx.strokeStyle = 'rgba(255,255,255,.22)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(0,0,24,0,Math.PI*2);
+    ctx.stroke();
+  }
+
+  ctx.restore();
+}
+
+// ── Enemies ───────────────────────────────────────────────────────────────────
+function drawEnemies(enemies){
+  for(const e of enemies){
+    if(e.type==='grunt') drawGrunt(e);
+    else drawRunner(e);
+  }
+}
+
+function drawGrunt(e){
+  ctx.save();
+  ctx.translate(e.x, e.y);
+  ctx.rotate(e.angle);
+
+  // Shadow
+  ctx.fillStyle = 'rgba(0,0,0,.35)';
+  ctx.beginPath();
+  ctx.ellipse(0,15,13,5,0,0,Math.PI*2);
+  ctx.fill();
+
+  // Legs (stumpy)
+  ctx.fillStyle = '#1e0530';
+  ctx.fillRect(-9,10,7,8);
+  ctx.fillRect(2,11,7,7);
+
+  // Body
+  ctx.fillStyle = '#3a1a5a';
+  ctx.fillRect(-11,-6,22,17);
+  ctx.fillStyle = '#4a2a6a';
+  ctx.fillRect(-9,-4,9,13);
+
+  // Club arm
+  ctx.fillStyle = '#250840';
+  ctx.fillRect(10,-5,15,8);
+  ctx.fillStyle = '#3a1050';
+  ctx.fillRect(23,-9,10,16);
+  // Club spikes
+  ctx.fillStyle = '#888';
+  ctx.fillRect(23,-11,3,3); ctx.fillRect(29,-11,3,3);
+  ctx.fillRect(23,5,3,3);   ctx.fillRect(29,5,3,3);
+
+  // Head (large)
+  ctx.fillStyle = '#5a2a7a';
+  ctx.fillRect(-10,-21,20,16);
+  ctx.fillStyle = '#6a3a8a';
+  ctx.fillRect(-8,-19,9,12);
+
+  // Horns
+  ctx.fillStyle = '#9a5aaa';
+  ctx.fillRect(-9,-27,4,8); ctx.fillRect(5,-27,4,8);
+  ctx.fillStyle = '#ba7aca';
+  ctx.fillRect(-8,-28,2,3); ctx.fillRect(6,-28,2,3);
+
+  // Glowing red eyes
+  ctx.fillStyle = '#ff2222';
+  ctx.fillRect(-7,-17,6,5); ctx.fillRect(1,-17,6,5);
+  ctx.fillStyle = 'rgba(255,40,40,.5)';
+  ctx.fillRect(-8,-18,8,7); ctx.fillRect(0,-18,8,7);
+
+  // Teeth
+  ctx.fillStyle = '#eeeecc';
+  ctx.fillRect(-4,-7,2,4); ctx.fillRect(0,-8,2,5); ctx.fillRect(4,-7,2,4);
+
+  ctx.restore();
+}
+
+function drawRunner(e){
+  ctx.save();
+  ctx.translate(e.x, e.y);
+  ctx.rotate(e.angle);
+
+  // Shadow
+  ctx.fillStyle = 'rgba(0,0,0,.3)';
+  ctx.beginPath();
+  ctx.ellipse(0,16,8,3,0,0,Math.PI*2);
+  ctx.fill();
+
+  // Legs (long, running-pose offset)
+  ctx.fillStyle = '#061820';
+  ctx.fillRect(-5,10,4,10);
+  ctx.fillRect(1,12,4,8);
+
+  // Lean body
+  ctx.fillStyle = '#0a2a3a';
+  ctx.fillRect(-6,-8,12,19);
+  ctx.fillStyle = '#163040';
+  ctx.fillRect(-4,-6,6,15);
+
+  // Clawed arms
+  ctx.fillStyle = '#082030';
+  ctx.fillRect(6,-6,14,4);
+  ctx.fillRect(6,-1,14,4);
+  // Claws
+  ctx.fillStyle = '#3a7a8a';
+  for(let i=0;i<3;i++){
+    ctx.fillRect(19,-8+i*3,4,2);
+  }
+
+  // Narrow head
+  ctx.fillStyle = '#163040';
+  ctx.fillRect(-5,-22,10,15);
+  ctx.fillStyle = '#1e4050';
+  ctx.fillRect(-4,-20,5,11);
+
+  // Yellow glowing eyes
+  ctx.fillStyle = '#ffff00';
+  ctx.fillRect(-3,-19,4,3); ctx.fillRect(2,-19,4,3);
+  ctx.fillStyle = 'rgba(255,255,0,.35)';
+  ctx.fillRect(-4,-20,6,5); ctx.fillRect(1,-20,6,5);
+
+  // Fin on top of head (sleek look)
+  ctx.fillStyle = '#0d2535';
+  ctx.fillRect(-1,-26,2,6);
+
+  ctx.restore();
+}
+
+function drawEnemyBars(enemies){
+  for(const e of enemies){
+    if(e.hp>=e.maxHp) continue;
+    const bw=30, bh=4, bx=e.x-bw/2, by=e.y-32;
+    ctx.fillStyle='#1a2030';
+    ctx.fillRect(bx,by,bw,bh);
+    const pct=e.hp/e.maxHp;
+    ctx.fillStyle = pct>.5 ? '#4ecdc4' : pct>.25 ? '#ffe66d' : '#e94560';
+    ctx.fillRect(bx,by,bw*pct,bh);
+  }
+}
+
+// ── Slash VFX ─────────────────────────────────────────────────────────────────
+function drawVfx(){
+  const now = performance.now();
+  for(const v of C.vfx){
+    const t   = (now-v.t0)/v.dur;
+    if(t>=1) continue;
+    const a   = 1-t;
+    const r   = SLASH_R * (0.6 + t*0.5);
+    const ha  = SLASH_HALF;
+
+    ctx.save();
+    ctx.globalAlpha = a;
+
+    // Outer white arc
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth   = 5*(1-t)+1;
+    ctx.lineCap     = 'round';
+    ctx.beginPath();
+    ctx.arc(v.x, v.y, r, v.angle-ha, v.angle+ha);
+    ctx.stroke();
+
+    // Colored inner arc
+    ctx.strokeStyle = v.color;
+    ctx.lineWidth   = 3*(1-t)+0.5;
+    ctx.beginPath();
+    ctx.arc(v.x, v.y, r*0.75, v.angle-ha*0.65, v.angle+ha*0.65);
+    ctx.stroke();
+
+    // Radial flash lines
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = `rgba(255,255,255,${a*0.5})`;
+    for(let i=-2;i<=2;i++){
+      const ang = v.angle + i*ha*0.5;
+      ctx.beginPath();
+      ctx.moveTo(v.x+Math.cos(ang)*18, v.y+Math.sin(ang)*18);
+      ctx.lineTo(v.x+Math.cos(ang)*r,  v.y+Math.sin(ang)*r);
+      ctx.stroke();
+    }
+
+    // Sparkle particles
+    for(let i=0;i<5;i++){
+      const sa  = v.angle + (Math.random()-0.5)*ha*2;
+      const sr  = r*(0.5+Math.random()*0.5);
+      const px  = v.x+Math.cos(sa)*sr;
+      const py  = v.y+Math.sin(sa)*sr;
+      const ps  = 3*(1-t);
+      ctx.fillStyle = i%2===0 ? '#ffffff' : v.color;
+      ctx.fillRect(px-ps/2, py-ps/2, ps, ps);
+    }
+
+    ctx.restore();
+  }
+}
+</script>
+</body>
+</html>
