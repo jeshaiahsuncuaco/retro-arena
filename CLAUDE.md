@@ -13,7 +13,23 @@ There are no tests and no build step. The game is immediately playable by openin
 
 ## Git & GitHub workflow
 
-Every meaningful change must be committed with a clean, descriptive message and pushed to `origin main` (https://github.com/jeshaiahsuncuaco/retro-arena). Never commit `node_modules/`.
+**Commit and push after every meaningful unit of work** — a new feature, a bug fix, a refactor, or any change that leaves the code in a better state than before. Do not batch multiple unrelated changes into one commit. The goal is a clean, recoverable history where any commit can be checked out and the game still works.
+
+Repository: https://github.com/jeshaiahsuncuaco/retro-arena (`origin main`)
+
+Rules:
+- Stage specific files by name — never `git add .` or `git add -A`
+- Never commit `node_modules/`, `.claude/`, or `Untitled-2.txt` (all in `.gitignore`)
+- Write commit messages in imperative mood with a short subject line; add a body when the change needs more context
+- Always `git push` immediately after committing — a local-only commit is not a saved version
+
+Example of a good commit message:
+```
+Increase slash arc from 70° to 90° for better game feel
+
+Players reported the cone felt too narrow at close range.
+Adjusted SLASH_ARC_HALF in server.js from 35° to 45°.
+```
 
 ## Architecture
 
